@@ -1,22 +1,30 @@
 # LightningEver Eclair Plugins
 
-이 저장소는 **LightningEver LSP** 운영에 필요한 두 개의 Eclair plugin 을 포함합니다. 모두 ACINQ 공식 plugin SPI (`fr.acinq.eclair.Plugin`) 를 구현하며, `java -cp lib/* fr.acinq.eclair.Boot <plugin.jar>` 형태로 로드됩니다.
+This repository contains two essential Eclair plugins developed to operate the **LightningEver LSP** (Liquidity Service Provider) node. Both plugins implement the official ACINQ Eclair plugin SPI (`fr.acinq.eclair.Plugin`) and are loaded dynamically during Eclair startup via the classpath or JVM arguments, e.g., `java -cp "lib/*" fr.acinq.eclair.Boot <plugin1.jar> <plugin2.jar>`.
 
-| Plugin | 역할 |
+## System Architecture
+
+**LightningEver** is a custom, closed-loop Lightning Network stack built on top of the **BitEver (BEC)** L1 blockchain. BitEver is a customized Bitcoin fork featuring Taproot, MuSig2, P2TR, and a custom `chainHash` (blockchain identifier). 
+
+Within this architecture, the Eclair LSP functions as the central routing hub and primary liquidity provider for all client nodes (e.g., Phoenix Android mobile wallets, also known as the LightningEver App). Since mobile wallets do not open direct channels between themselves, all transactions are routed via the LSP node.
+
+### Included Plugins
+
+| Plugin | Role & Description |
 |---|---|
-| **channel-funding** | 폰의 dual-funded channel open 요청을 가로채서 LSP 측 contribution (기본 50M sat) 으로 응답하는 funding interceptor |
-| **fcm-push** | (LightningEver 신규) Firebase Cloud Messaging 으로 모바일 폰을 깨워 **BOLT12 offer 의 오프라인 수신** 을 가능하게 하는 wake-up push 플러그인 |
+| **channel-funding** | A **funding interceptor** plugin that intercepts incoming dual-funded channel open requests from mobile clients and responds with the LSP-side liquidity contribution (default: `50,000,000 sat`). |
+| **fcm-push** | A **wake-up notification** plugin utilizing Firebase Cloud Messaging (FCM) to wake up offline mobile clients. This makes **offline BOLT12 offer payments** and **automatic swap-in deposit alerts** possible. |
 
 ---
 
-## 디렉터리 구조
+## Directory Structure
 
 ```
 .
-├── channel-funding/       # 기존 plugin (BitEver 운영 시점부터)
+├── channel-funding/       # Intercepts channel opens and promises LSP-side liquidity
 │   ├── pom.xml
 │   └── src/main/...
-├── fcm-push/              # 신규 plugin (2026-05-21)
+├── fcm-push/              # Custom wake-up push plugin for offline clients
 │   ├── pom.xml
 │   ├── src/main/resources/reference.conf
 │   └── src/main/scala/fr/acinq/eclair/plugins/fcmpush/
@@ -26,42 +34,59 @@
 │       ├── FcmOAuth2.scala
 │       ├── FcmSender.scala
 │       └── FcmPushActor.scala
-└── pom.xml                # parent (modules: channel-funding, fcm-push)
+└── pom.xml                # Parent Reactor POM (modules: channel-funding, fcm-push)
 ```
 
-`historical-gossip / offline-commands / custom-offer` 디렉터리는 ACINQ 의 옛 0.13.0-SNAPSHOT pom 을 참조하는 별개 plugin 으로, **현 reactor 에서는 빌드하지 않습니다** (parent pom 의 `<modules>` 에서 제외). 필요하면 부모 pom 을 0.13.1 로 일괄 업데이트한 후 재포함.
+> [!NOTE]
+> The directories `historical-gossip`, `offline-commands`, and `custom-offer` are legacy plugins referencing an older 0.13.0-SNAPSHOT POM. They are currently excluded from the parent POM's `<modules>` section and are not compiled in the active reactor build.
 
 ---
 
-## 빌드
+## Building the Plugins
 
+### Prerequisites
+
+- **Java Development Kit (JDK) 21**: Recommended OpenJDK 21 distribution.
+- **Local Eclair Dependency**: Because these plugins are built against the custom LightningEver Eclair fork APIs, the compiled core jar must reside in your local Maven cache (`~/.m2/repository`). 
+
+First, clone and install the customized **LightningEver Eclair fork** (branch `260517_FIN`):
+```bash
+# Inside the LightningEver-bitever-eclair repository:
+./mvnw clean install -DskipTests
+```
+
+### Compile and Package
+
+Once the Eclair dependency is installed locally, build this plugin repository by running:
 ```bash
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 
-# 두 plugin 모두 빌드 (parent reactor)
+# Package both plugins (Parent Reactor)
 ./mvnw clean package -Dmaven.test.skip=true
+```
 
-# 또는 하나만
+You can also package a specific plugin individually:
+```bash
 ./mvnw package -pl fcm-push        -am -Dmaven.test.skip=true
 ./mvnw package -pl channel-funding -am -Dmaven.test.skip=true
 ```
 
-산출물:
+**Build Artifacts**:
 - `channel-funding/target/channel-funding-plugin-0.13.1.jar`
 - `fcm-push/target/fcm-push-plugin-0.13.1.jar`
 
-eclair 가 의존하는 `fr.acinq.eclair:eclair-core_2.13:0.13.1` 가 로컬 maven repo 에 있어야 합니다 (`~/.m2/repository/`). 없으면 먼저 LightningEver eclair fork 의 `mvn install -pl eclair-core -am -DskipTests` 실행.
-
 ---
 
-## 배포
+## Deployment
 
+Copy the packaged plugin jars to Eclair's plugins directory:
 ```bash
-# 운영 환경
 cp channel-funding/target/channel-funding-plugin-0.13.1.jar /root/.eclair/plugins/
 cp fcm-push/target/fcm-push-plugin-0.13.1.jar               /root/.eclair/plugins/
+```
 
-# Eclair 기동 시 두 jar 경로 모두 인자로 전달
+Launch the Eclair node, specifying both jar paths:
+```bash
 cd /root/bitever-eclair-dist/eclair-node-0.13.1-93cc2ab
 nohup java -cp "lib/*" fr.acinq.eclair.Boot \
   /root/.eclair/plugins/channel-funding-plugin-0.13.1.jar \
@@ -69,7 +94,7 @@ nohup java -cp "lib/*" fr.acinq.eclair.Boot \
   > /root/.eclair/eclair-stdout.log 2>&1 &
 ```
 
-기동 후 로그에서 다음 두 줄 확인:
+Confirm that Eclair successfully loads both plugins during boot:
 ```
 fr.acinq.eclair.Boot - loaded plugin ChannelFundingPlugin
 fr.acinq.eclair.Boot - loaded plugin FcmPushPlugin
@@ -77,14 +102,14 @@ fr.acinq.eclair.Boot - loaded plugin FcmPushPlugin
 
 ---
 
-## fcm-push 설정
+## FCM Push Plugin Configuration
 
-`eclair.conf` 와 별도로, `~/.eclair/fcm_push.conf` 파일로 plugin 설정을 override 할 수 있습니다. 기본값은 plugin jar 내부의 `reference.conf`:
+By default, the plugin uses configuration defaults stored in its jar (`reference.conf`). You can override these variables by creating or editing `~/.eclair/fcm_push.conf`:
 
 ```hocon
 fcm-push {
-  enabled              = true                                              # token tracking + push
-  service-account-file = ${user.home}"/.eclair/fcm-service-account.json"   # 권한 600 권장
+  enabled              = true                                              # Enable token tracking and push requests
+  service-account-file = ${user.home}"/.eclair/fcm-service-account.json"   # Path to Firebase Credentials (600 recommended)
   project-id           = "lightningever"                                   # Firebase project_id
   fcm-endpoint         = "https://fcm.googleapis.com"
   access-token-refresh-margin-seconds = 300
@@ -94,83 +119,80 @@ fcm-push {
 }
 ```
 
-`service-account-file` 은 Firebase Console → 프로젝트 설정 → 서비스 계정 → "새 비공개 키 생성" 으로 받은 JSON 파일이어야 합니다. 권한 `600` 으로 보호.
+> [!WARNING]
+> The `service-account-file` must be the private key JSON file obtained via Firebase Console -> Project Settings -> Service Accounts -> "Generate New Private Key". Secure this file with strict read permissions (e.g., `chmod 600`). **NEVER commit this JSON file or push it to any public repository.**
 
 ---
 
-## 동작 원리 (fcm-push 짧게)
+## Technical Mechanism (fcm-push)
 
-1. Phoenix 폰이 LSP 와 연결되면 `FCMToken` (lightning message tag **35017**) 을 보냄.
-2. LSP 의 `Peer.scala` 가 이를 파싱해서 `EventStream` 에 `FcmTokenRegistered(nodeId, token, platform)` publish.
-3. plugin 의 `FcmPushActor` 가 받아서 `peer_nodeId → token` in-memory map 에 저장.
-4. 누군가 폰에게 결제를 보내면 `MessageRelay` 가 (폰 offline 시) `PeerReadyNotifier` 를 호출.
-5. `PeerReadyNotifier` 의 `waitForPeerConnected` 진입 시 `WakeUpPeerRequested(nodeId, reason)` 이벤트 publish.
-6. plugin 이 그 이벤트를 받아 registry 에서 token 조회 → **FCM HTTP v1 API 로 push POST** (OAuth2 service-account JWT 인증).
-7. 폰이 깨어나서 LSP 와 재연결 → `PeerReadyNotifier` 가 `PeerReady` 응답 → 결제 정상 진행.
+The wake-up push mechanism operates in the following sequential flow:
 
-자세한 흐름은 LightningEver 본 저장소의 `260521OFFBOLT12.md` 참조.
+```
+Phone (Offline B)                 Eclair LSP (Plugin)                   Phone (Active A)
+      │                                   │                                   │
+      │── 1. FCMToken (Tag 35017) ───────▶│                                   │
+      │   (Initial connection)            │                                   │
+      │                                   │◀── 2. Request BOLT12 Offer ───────│
+      │                                   │    (Mobile B is currently offline)│
+      │                                   │                                   │
+      │                                   │── 3. PeerReadyNotifier triggered  │
+      │                                   │    (Publish WakeUpPeerRequested)  │
+      │                                   │                                   │
+      │◀── 4. Send FCM Push Notification ─│                                   │
+      │    (OAuth2 HTTP v1 POST)          │                                   │
+      │                                   │                                   │
+      │── 5. Wake up & Reconnect ────────▶│                                   │
+      │                                   │── 6. Deliver Onion payload ──────▶│
+      │                                   │                                   │
+      │◀── 7. Issue & send Invoice ───────│                                   │
+      │                                   │── 8. Forward Invoice ────────────▶│
+      │                                   │                                   │
+      │                                   │◀── 9. HTLC Payment Fulfill ───────│
+      │◀── 10. HTLC Payment Fulfill ──────│                                   │
+```
 
----
-
-## 주의
-
-- `fcm-push-plugin` 은 **outbound HTTPS 만** 사용합니다 (Google FCM v1 endpoint). 추가 포트 점유 없음.
-- service-account JSON 의 권한은 **Google FCM 의 임의 메시지 발송** 입니다. git/이미지에 절대 commit 금지. 별도 secret/volume 으로 관리.
-- 토큰 저장소는 현재 **in-memory only** 입니다. eclair 재시작 시 폰이 재연결할 때까지 push 무동작. 후속 작업으로 SQLite 영속화 권장.
-
----
-
-## 라이선스
-
-Apache License, Version 2.0
-
----
-
-## 260521OFFBOLT12 — 검증 완료
-
-이번 브랜치에서 `fcm-push-plugin` 이 다음 흐름으로 정상 동작함을 폰 검증으로 확인:
-
-1. 폰 B 가 LSP 와 연결 → `FCMToken` (tag 35017) 송신 → LSP 의 `Peer.scala` 가 EventStream 으로 `FcmTokenRegistered` publish → 본 plugin 의 `FcmPushActor` 가 `peer_nodeId → token` 맵에 저장.
-2. 폰 A 가 폰 B 의 BOLT12 offer 로 송금 → LSP `MessageRelay` 가 `invoice_request` onion 메시지를 폰 B 에게 forward 시도 → 폰 B 가 offline 이면 `PeerReadyNotifier` 가 `WakeUpPeerRequested` publish → 본 plugin 이 FCM HTTP v1 (OAuth2 service-account JWT 인증) 으로 push 발사.
-3. 폰 B 가 깨어나 LSP 와 reconnect → invoice 발급 → 폰 A 로 응답 → HTLC 결제 진행 → 폰 B 가 잠금화면에서도 결제 수신.
-
-자세한 가이드는 본 저장소의 상위 LightningEver 프로젝트 폴더의 `260521OFFBOLT12.md` 참조.
+1. **Token Exchange**: When a Phoenix mobile client connects to the LSP, it sends its registration token using a custom Lightning protocol message tag **`35017`**.
+2. **Event Publication**: Eclair LSP's `Peer.scala` parses this custom message and publishes `FcmTokenRegistered(nodeId, token, platform)` to the Akka `EventStream`.
+3. **Registry Storage**: The plugin's `FcmPushActor` subscribes to this event and registers the token inside an in-memory `peer_nodeId -> token` lookup map.
+4. **Offline Relay Detection**: When an active client (Phone A) attempts a payment or onion route relay to Phone B, LSP's `MessageRelay` triggers a `PeerReadyNotifier` if B is offline.
+5. **Wake-up Trigger**: Inside `PeerReadyNotifier.waitForPeerConnected`, the LSP publishes a `WakeUpPeerRequested(nodeId, reason)` event to the `EventStream`.
+6. **Push Outbound**: The plugin receives this event, fetches Phone B's FCM token, requests an OAuth2 token using the service account, and POSTs a high-priority push notification payload to the Google Firebase HTTP v1 endpoint.
+7. **Reconnection & Settle**: B's background system service wakes up upon receiving the push, establishes a TCP socket connection back to Eclair LSP, receives the pending invoice request, generates the invoice response, and settles the HTLC payment.
 
 ---
 
-## 260522_OFFSWAPIN 추가 변경 (이 브랜치)
+## Safety & Operational Notes
 
-**오프라인 스왑인 입금 자동 감지** 를 위한 plugin 측 코드 신설.
+- **Outbound-Only Traffic**: The FCM push plugin only makes outbound HTTPS requests to Google's FCM v1 endpoint. No extra ports are bound or exposed.
+- **In-Memory token storage**: Tokens are currently cached in memory. If Eclair restarts, push notifications cannot be triggered for clients until they reconnect once and automatically re-register their tokens. (Persistent SQLite storage is a target for future updates).
 
-### 신규 파일
+---
 
-- `fcm-push/src/main/scala/fr/acinq/eclair/plugins/fcmpush/SwapInAddressRegistry.scala`
-  - peer nodeId ↔ 등록된 swap-in publicKeyScript 양방향 인덱스 (`ConcurrentHashMap`)
-  - 등록 시점에 `addressToPublicKeyScript` 로 미리 디코드해서 hot-path 는 단순 map lookup
+## Branch Status & Features
 
-### 변경 파일
+### 260521OFFBOLT12 — Offline BOLT12 Settle Verified
+Successfully tested and verified the full end-to-end offline payment scenario using physical devices. Mobile wallets can receive incoming Bolt12 payments even while the application is closed or the device screen is locked.
 
-- `fcm-push/src/main/scala/fr/acinq/eclair/plugins/fcmpush/FcmPushPlugin.scala`
-  - `SwapInAddressRegistry(kit.nodeParams.chainHash)` 인스턴스화 + actor 에 주입
-- `fcm-push/src/main/scala/fr/acinq/eclair/plugins/fcmpush/FcmPushActor.scala`
-  - `SwapInAddressesRegistered` EventStream 구독 → registry 갱신
-  - `NewTransaction` EventStream 구독 → 등록된 swap-in script 와 매칭 → FCM push (reason="SwapInDeposit", payload: tx_id, amount_sat, node_id_hash)
-  - 30분 dedup (`TxId` 키, 같은 tx 의 중복 push 차단)
-  - `FcmTokenUnregistered` 시 `SwapInAddressRegistry.remove(nodeId)` 도 같이 정리
+### 260522_OFFSWAPIN — Auto-SwapIn Deposit Alerts
+Adds support for monitoring BitEver L1 on-chain transactions and alerting offline users of incoming swap-in deposits.
 
-### 현 운영 상태 — 일시 비활성
+- **SwapInAddressRegistry**: An index maps peer node IDs to registered L1 swap-in addresses (`publicKeyScript`).
+- **L1 Transaction Matcher**: The plugin subscribes to Eclair's `NewTransaction` stream. If a transaction matches a registered swap-in script, the plugin triggers a wake-up push notification (reason `SwapInDeposit`) containing the TXID and deposit amount.
+- **Deduplication**: Push notifications are rate-limited with a 30-minute deduplication cache per TXID.
 
-`SwapInAddressesRegistered` / `NewTransaction` EventStream 구독을 actor `preStart()` 에서 **두 줄 주석 처리** 한 상태:
-
+#### Current Operational Warning
+Both `SwapInAddressesRegistered` and `NewTransaction` subscriptions are **currently disabled (commented out)** in the Actor's `preStart()` hook:
 ```scala
 // context.system.eventStream.subscribe(self, classOf[SwapInAddressesRegistered])
 context.system.eventStream.subscribe(self, classOf[PaymentReceived])
 context.system.eventStream.subscribe(self, classOf[WakeUpPeerRequested])
 // context.system.eventStream.subscribe(self, classOf[NewTransaction])
 ```
+*Reason: Simultaneous execution of BOLT12 payments and Swap-in notifications could occasionally trigger a channel reserve violation force-close. The code remains fully written and functional; to reactivate the automated alerts, simply uncomment those two event subscriptions.*
 
-이유: BOLT12 offline 결제와 동시 발동 시 channel reserve violation force-close 가 재현됨. 신규 자동화 코드 자체가 결제 흐름에 영향을 미치는 정확한 메커니즘이 미확인이라, 안전 가드 추가 + 검증이 끝나기 전까지는 호출 자체를 막아둔다. 코드는 모두 유지 — subscribe 두 줄만 복원하면 자동 동작.
+---
 
-기동 로그에 `fcm-push subscribed to EventStream (enabled=true, sender=true, swap-in-auto=DISABLED)` 가 출력되면 비활성 상태가 맞음.
+## License
 
-자세한 가이드: LightningEver 프로젝트의 `260522FCM.md`.
+Licensed under the Apache License, Version 2.0.

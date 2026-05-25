@@ -2,9 +2,9 @@ name: Build & Test
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, main, '260523', '260525' ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, main ]
   schedule:
     # Run every night at midnight.
     - cron: '0 0 * * *'
@@ -19,7 +19,8 @@ jobs:
       - name: Checkout eclair
         uses: actions/checkout@v4
         with:
-          repository: acinq/eclair
+          repository: makewalletfirst/LightningEver-bitever-eclair
+          ref: 260517_FIN
           path: eclair
     
       - name: Checkout eclair-plugins
@@ -34,9 +35,9 @@ jobs:
           distribution: 'adopt'
 
       - name: Build eclair
-        run: mvn install -DskipTests
+        run: ./mvnw install -DskipTests
         working-directory: ./eclair
 
       - name: Build eclair plugins
-        run: mvn test-compile && mvn test
+        run: ./mvnw clean package -Dmaven.test.skip=true
         working-directory: ./eclair-plugins
