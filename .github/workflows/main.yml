@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: makewalletfirst/LightningEver-bitever-eclair
-          ref: 260517_FIN
+          ref: 260523
           path: eclair
     
       - name: Checkout eclair-plugins
