@@ -92,10 +92,10 @@ class OpenChannelInterceptor(config: ChannelFundingPluginConfig, router: ActorRe
           List(req.fundingRate),
           Set(req.paymentDetails.paymentType)
         )
-        val peerFunding = o.openChannelNonInitiator.open.toOption.map(_.fundingAmount).getOrElse(fr.acinq.bitcoin.scalacompat.Satoshi(0))
-        val lspFunding = peerFunding * 4
+        val requestedAmount = req.requestedAmount
+        val lspFunding = requestedAmount * 4
         val finalFunding = if (lspFunding.toLong < 1000000) fr.acinq.bitcoin.scalacompat.Satoshi(1000000) else lspFunding
-        logger.info(s"[BEC-DEBUG] calculated lspFunding=$lspFunding, finalFunding=$finalFunding")
+        logger.info(s"[BEC-DEBUG] calculated requestedAmount=$requestedAmount, lspFunding=$lspFunding, finalFunding=$finalFunding")
         LiquidityAds.AddFunding(finalFunding, Some(willFundRates))
       }
     logger.info(s"[BEC-DEBUG] final addFunding_opt=$addFunding_opt")
