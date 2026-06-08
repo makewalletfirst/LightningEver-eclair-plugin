@@ -193,6 +193,9 @@ context.system.eventStream.subscribe(self, classOf[WakeUpPeerRequested])
 
 ---
 
+### Modifications (2026-06-08)
+- **Scaled Inbound Liquidity Provisioning**: The auto-generated channel capacity has been modified from a hardcoded ~50M sat to a dynamically scaled capacity based on the peer's actual deposit amount (scaled at 4x the peer's funding amount, with a minimum of 1M satoshis).
+
 ## License
 
 Licensed under the Apache License, Version 2.0.

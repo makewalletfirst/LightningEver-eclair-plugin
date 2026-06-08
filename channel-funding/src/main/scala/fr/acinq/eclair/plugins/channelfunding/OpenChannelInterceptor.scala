@@ -74,6 +74,17 @@ class OpenChannelInterceptor(config: ChannelFundingPluginConfig, router: ActorRe
   }
 
   private def acceptOpenChannel(o: InterceptOpenChannelReceived): Unit = {
+    val logger = org.slf4j.LoggerFactory.getLogger(classOf[OpenChannelInterceptor])
+    logger.info(s"[BEC-DEBUG] acceptOpenChannel called with o=$o")
+    logger.info(s"[BEC-DEBUG] openChannelNonInitiator.open isLeft=${o.openChannelNonInitiator.open.isLeft} isRight=${o.openChannelNonInitiator.open.isRight}")
+    
+    val openDualFunded_opt = o.openChannelNonInitiator.open.toOption
+    logger.info(s"[BEC-DEBUG] openDualFunded_opt=$openDualFunded_opt")
+    if (openDualFunded_opt.isDefined) {
+      val reqFunding = openDualFunded_opt.get.requestFunding_opt
+      logger.info(s"[BEC-DEBUG] requestFunding_opt=$reqFunding")
+    }
+
     val addFunding_opt = o.openChannelNonInitiator.open.toOption
       .flatMap(_.requestFunding_opt)
       .map { req =>
@@ -84,8 +95,10 @@ class OpenChannelInterceptor(config: ChannelFundingPluginConfig, router: ActorRe
         val peerFunding = o.openChannelNonInitiator.open.toOption.map(_.fundingAmount).getOrElse(fr.acinq.bitcoin.scalacompat.Satoshi(0))
         val lspFunding = peerFunding * 4
         val finalFunding = if (lspFunding.toLong < 1000000) fr.acinq.bitcoin.scalacompat.Satoshi(1000000) else lspFunding
+        logger.info(s"[BEC-DEBUG] calculated lspFunding=$lspFunding, finalFunding=$finalFunding")
         LiquidityAds.AddFunding(finalFunding, Some(willFundRates))
       }
+    logger.info(s"[BEC-DEBUG] final addFunding_opt=$addFunding_opt")
     o.replyTo ! AcceptOpenChannel(o.temporaryChannelId, addFunding_opt)
   }
 
