@@ -15,7 +15,7 @@ import akka.pattern.ask
 import akka.util.Timeout
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, Crypto, Transaction, TxId}
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
-import fr.acinq.eclair.blockchain.NewTransaction
+import fr.acinq.eclair.blockchain.{NewBlock, NewTransaction}
 import fr.acinq.eclair.channel.Register
 import fr.acinq.eclair.io.{FcmTokenRegistered, FcmTokenUnregistered, SwapInAddressesRegistered, WakeUpPeerRequested}
 import fr.acinq.eclair.payment.PaymentReceived
@@ -57,18 +57,17 @@ class FcmPushActor(
    */
   private val recentSwapInPushes = new ConcurrentHashMap[TxId, Long]()
   private val SwapInPushTtlMs = 30 * 60 * 1000L // 30 min — covers reorg / re-broadcast window
+  private val pendingConfirmations = new ConcurrentHashMap[TxId, (PublicKey, Int)]()
 
   override def preStart(): Unit = {
     context.system.eventStream.subscribe(self, classOf[FcmTokenRegistered])
     context.system.eventStream.subscribe(self, classOf[FcmTokenUnregistered])
-    // [LightningEver 2026-05-22] swap-in offline 자동화는 BOLT12 offline 결제에서 force-close
-    // 재발 가능성이 확인되어 일시 비활성. SwapInAddressesRegistered / NewTransaction subscribe 차단.
-    // 코드는 남겨두고 향후 root-cause 정리 후 재활성 예정.
-    // context.system.eventStream.subscribe(self, classOf[SwapInAddressesRegistered])
+    context.system.eventStream.subscribe(self, classOf[SwapInAddressesRegistered])
     context.system.eventStream.subscribe(self, classOf[PaymentReceived])
     context.system.eventStream.subscribe(self, classOf[WakeUpPeerRequested])
-    // context.system.eventStream.subscribe(self, classOf[NewTransaction])
-    log.info("fcm-push subscribed to EventStream (enabled={}, sender={}, swap-in-auto=DISABLED)", config.enabled, fcmSender.isDefined)
+    context.system.eventStream.subscribe(self, classOf[NewTransaction])
+    context.system.eventStream.subscribe(self, classOf[NewBlock])
+    log.info("fcm-push subscribed to EventStream (enabled={}, sender={}, swap-in-auto=ENABLED)", config.enabled, fcmSender.isDefined)
   }
 
   override def receive: Receive = {
@@ -122,6 +121,9 @@ class FcmPushActor(
     case NewTransaction(tx: Transaction) =>
       if (swapInRegistry.size > 0) handleNewTransaction(tx)
 
+    case nb: NewBlock =>
+      handleNewBlock(nb)
+
     case SendPushFor(nodeId, token, reason, extra) =>
       fcmSender match {
         case Some(s) =>
@@ -151,21 +153,53 @@ class FcmPushActor(
             matched = true
             registry.get(nodeId) match {
               case Some(token) =>
-                log.info("fcm-push: swap-in deposit detected for nodeId={} txid={} amount={} sat — sending push", nodeId, txid, out.amount.toLong)
+                log.info("fcm-push: swap-in deposit detected for nodeId={} txid={} amount={} sat — sending push (0 conf)", nodeId, txid, out.amount.toLong)
                 recentSwapInPushes.put(txid, System.currentTimeMillis())
+                pendingConfirmations.put(txid, (nodeId, 0))
                 pruneRecent()
                 self ! SendPushFor(nodeId, token, "SwapInDeposit", Map(
                   "tx_id" -> txid.value.toHex,
                   "amount_sat" -> out.amount.toLong.toString,
                   "node_id_hash" -> nodeIdHash(nodeId),
+                  "confirmations" -> "0"
                 ))
               case None =>
                 log.info("fcm-push: swap-in deposit detected for nodeId={} txid={} but no FCM token registered", nodeId, txid)
                 recentSwapInPushes.put(txid, System.currentTimeMillis())
+                pendingConfirmations.put(txid, (nodeId, 0))
                 pruneRecent()
             }
           case None => // not one of ours
         }
+      }
+    }
+  }
+
+  private def handleNewBlock(nb: NewBlock): Unit = {
+    val it = pendingConfirmations.entrySet().iterator()
+    while (it.hasNext) {
+      val entry = it.next()
+      val txid = entry.getKey
+      val (nodeId, currentConf) = entry.getValue
+      val nextConf = currentConf + 1
+
+      registry.get(nodeId) match {
+        case Some(token) =>
+          log.info("fcm-push: swap-in deposit confirmed for nodeId={} txid={} conf={} — sending push", nodeId, txid, nextConf)
+          self ! SendPushFor(nodeId, token, "SwapInDeposit", Map(
+            "tx_id" -> txid.value.toHex,
+            "node_id_hash" -> nodeIdHash(nodeId),
+            "confirmations" -> nextConf.toString
+          ))
+        case None =>
+          log.debug("fcm-push: swap-in deposit confirmed for nodeId={} txid={} conf={} but no FCM token registered", nodeId, txid, nextConf)
+      }
+
+      if (nextConf >= 3) {
+        log.info("fcm-push: swap-in txid={} reached 3 confirmations, stopping tracking", txid)
+        it.remove()
+      } else {
+        pendingConfirmations.put(txid, (nodeId, nextConf))
       }
     }
   }
