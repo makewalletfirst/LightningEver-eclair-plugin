@@ -16,7 +16,7 @@ import akka.util.Timeout
 import fr.acinq.bitcoin.scalacompat.{ByteVector32, Crypto, Transaction, TxId}
 import fr.acinq.bitcoin.scalacompat.Crypto.PublicKey
 import fr.acinq.eclair.blockchain.NewTransaction
-import fr.acinq.eclair.channel.Register
+import fr.acinq.eclair.channel.{ChannelStateChanged, Register}
 import fr.acinq.eclair.io.{FcmTokenRegistered, FcmTokenUnregistered, SwapInAddressesRegistered, WakeUpPeerRequested}
 import fr.acinq.eclair.payment.PaymentReceived
 
@@ -36,6 +36,7 @@ object FcmPushActor {
  *  - WakeUpPeerRequested: BOLT12 / NodeRelay wake-up trigger
  *  - PaymentReceived: post-payment notification
  *  - NewTransaction: scan tx outputs against the swap-in registry to wake offline wallets on L1 deposits
+ *  - ChannelStateChanged: wake offline wallets during channel opening negotiation
  *
  * Push sends are best-effort and synchronous-blocking (FCM v1 is fast — single-digit ms typically).
  */
@@ -67,6 +68,7 @@ class FcmPushActor(
     // context.system.eventStream.subscribe(self, classOf[SwapInAddressesRegistered])
     context.system.eventStream.subscribe(self, classOf[PaymentReceived])
     context.system.eventStream.subscribe(self, classOf[WakeUpPeerRequested])
+    context.system.eventStream.subscribe(self, classOf[ChannelStateChanged])
     // context.system.eventStream.subscribe(self, classOf[NewTransaction])
     log.info("fcm-push subscribed to EventStream (enabled={}, sender={}, swap-in-auto=DISABLED)", config.enabled, fcmSender.isDefined)
   }
@@ -117,6 +119,38 @@ class FcmPushActor(
           log.warning("PaymentReceived but channelId={} not found in Register; cannot look up peer", channelId)
         case Failure(ex) =>
           log.error(ex, "fcm-push: failed to resolve nodeId for channelId={}", channelId)
+      }
+
+    case ChannelStateChanged(_, _, _, remoteNodeId, _, currentState, _) =>
+      import fr.acinq.eclair.channel._
+      currentState match {
+        case WAIT_FOR_INIT_INTERNAL |
+             WAIT_FOR_INIT_SINGLE_FUNDED_CHANNEL |
+             WAIT_FOR_OPEN_CHANNEL |
+             WAIT_FOR_ACCEPT_CHANNEL |
+             WAIT_FOR_FUNDING_INTERNAL |
+             WAIT_FOR_FUNDING_CREATED |
+             WAIT_FOR_FUNDING_SIGNED |
+             WAIT_FOR_FUNDING_CONFIRMED |
+             WAIT_FOR_CHANNEL_READY |
+             WAIT_FOR_INIT_DUAL_FUNDED_CHANNEL |
+             WAIT_FOR_OPEN_DUAL_FUNDED_CHANNEL |
+             WAIT_FOR_ACCEPT_DUAL_FUNDED_CHANNEL |
+             WAIT_FOR_DUAL_FUNDING_CREATED |
+             WAIT_FOR_DUAL_FUNDING_SIGNED |
+             WAIT_FOR_DUAL_FUNDING_CONFIRMED |
+             WAIT_FOR_DUAL_FUNDING_READY =>
+          registry.get(remoteNodeId) match {
+            case Some(token) =>
+              log.info("fcm-push: channel in progress state {} for nodeId={} — sending push", currentState, remoteNodeId)
+              self ! SendPushFor(remoteNodeId, token, "ChannelStateChanged", Map(
+                "state" -> currentState.toString,
+                "node_id_hash" -> nodeIdHash(remoteNodeId)
+              ))
+            case None =>
+              log.debug("ChannelStateChanged to {} for nodeId={} but no token in registry; skipping", currentState, remoteNodeId)
+          }
+        case _ => // ignore other states
       }
 
     case NewTransaction(tx: Transaction) =>
