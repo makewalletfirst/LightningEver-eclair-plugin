@@ -1,0 +1,23 @@
+[
+  {
+    "Description": "Identified a Private Key, which may compromise cryptographic security and sensitive data encryption.",
+    "StartLine": 124,
+    "EndLine": 125,
+    "StartColumn": 18,
+    "EndColumn": 41,
+    "Match": "-----BEGIN PRIVATE KEY-----\", \"\")\n      .replace(\"-----END PRIVATE KEY----",
+    "Secret": "-----BEGIN PRIVATE KEY-----\", \"\")\n      .replace(\"-----END PRIVATE KEY----",
+    "File": "fcm-push/src/main/scala/fr/acinq/eclair/plugins/fcmpush/FcmOAuth2.scala",
+    "SymlinkFile": "",
+    "Commit": "d1732e55cb1b59d160d2379eb78da5e3b4f69e4d",
+    "Entropy": 3.9793313,
+    "Author": "makewalletfirst",
+    "Email": "tyeun7@gmail.com",
+    "Date": "2026-05-21T03:13:43Z",
+    "Message": "260521 SAFE: snapshot — channel-funding + new fcm-push plugin",
+    "Tags": [],
+    "RuleID": "private-key",
+    "Fingerprint": "d1732e55cb1b59d160d2379eb78da5e3b4f69e4d:fcm-push/src/main/scala/fr/acinq/eclair/plugins/fcmpush/FcmOAuth2.scala:private-key:124",
+    "repo": "LightningEver-eclair-plugin"
+  }
+]
