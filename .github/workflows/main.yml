@@ -1,0 +1,43 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [ master, main, '260523', '260525' ]
+  pull_request:
+    branches: [ master, main ]
+  schedule:
+    # Run every night at midnight.
+    - cron: '0 0 * * *'
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout eclair
+        uses: actions/checkout@v4
+        with:
+          repository: makewalletfirst/LightningEver-bitever-eclair
+          ref: 260523
+          path: eclair
+    
+      - name: Checkout eclair-plugins
+        uses: actions/checkout@v4
+        with:
+          path: eclair-plugins
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: 'adopt'
+
+      - name: Build eclair
+        run: ./mvnw install -pl eclair-core,eclair-node -am -DskipTests
+        working-directory: ./eclair
+
+      - name: Build eclair plugins
+        run: ./mvnw clean package -Dmaven.test.skip=true
+        working-directory: ./eclair-plugins
